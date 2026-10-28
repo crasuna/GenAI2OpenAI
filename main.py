@@ -620,10 +620,25 @@ def normalize_messages_for_genai(messages):
             continue
 
         tool_calls = message.get("tool_calls")
-        if role == "assistant" and tool_calls and not content:
+        if role == "assistant" and tool_calls:
+            history_calls = []
+            for call in tool_calls:
+                function = call["function"]
+                arguments = function.get("arguments", {})
+                if isinstance(arguments, str):
+                    arguments = json.loads(arguments)
+                if not isinstance(arguments, dict):
+                    raise ValueError("Historical tool arguments must be a JSON object")
+                history_call = {"name": function["name"], "arguments": arguments}
+                if call.get("id"):
+                    history_call["id"] = call["id"]
+                history_calls.append(history_call)
+            tool_text = "TOOL_REQUEST " + json.dumps(
+                {"tool_calls": history_calls}, ensure_ascii=False
+            )
             normalized_messages.append({
                 "role": "assistant",
-                "content": "已请求调用工具：\n" + json.dumps(tool_calls, ensure_ascii=False),
+                "content": f"{content}\n{tool_text}" if content else tool_text,
             })
             continue
 
@@ -691,9 +706,9 @@ def build_tool_calling_messages(messages, tools, tool_choice):
     normalized_choice = normalize_tool_choice(tool_choice)
     tool_prompt = [
         "你可以调用调用方提供的工具，但上游 API 没有原生 tool calling 能力。",
-        "当你决定调用工具时，优先输出一个 JSON 对象，不要输出 Markdown、解释或额外文本。",
-        "JSON 格式必须为：{\"tool_calls\":[{\"name\":\"工具名\",\"arguments\":{}}]}。",
-        "兼容格式：也允许输出 <tool_call>{\"name\":\"工具名\",\"arguments\":{}}</tool_call>；若并行调用可连续输出多个 <tool_call>...</tool_call>。",
+        "当你决定调用工具时，只输出 TOOL_REQUEST 前缀和一个 JSON 对象，不要输出 Markdown 或解释。",
+        "格式必须为：TOOL_REQUEST {\"tool_calls\":[{\"name\":\"工具名\",\"arguments\":{}}]}。多个调用放在同一 tool_calls 数组中。",
+        "历史中的 TOOL_REQUEST 是已经发起的调用，id 用于关联后续工具结果，不要仅因看到历史记录就重复执行。",
         "arguments 必须是符合工具 JSON Schema 的对象。",
         "如果不需要调用工具，则正常回答用户，不要输出上述 JSON。",
         f"tool_choice: {json.dumps(normalized_choice, ensure_ascii=False)}",
@@ -706,10 +721,18 @@ def build_tool_calling_messages(messages, tools, tool_choice):
     elif isinstance(normalized_choice, dict):
         tool_prompt.append(f"本次请求必须调用工具 {normalized_choice['name']}。")
 
-    return [
-        {"role": "system", "content": "\n".join(tool_prompt)},
-        *messages,
-    ]
+    # Combine leading system instructions and append the text transport contract.
+    # Preserve client policy order without mutating the caller messages.
+    transport_requirement = 'TRANSPORT REQUIREMENT: Native function/tool calling is DISABLED for this connection. Never emit a native tool call, a tool-channel message, or special tool tokens. Every reply MUST be ordinary visible assistant final-answer text. The tools listed above are descriptions for an external text parser, not native tools. When requesting an operation, output the literal text prefix TOOL_REQUEST followed by a JSON object with this schema: {"tool_calls":[{"name":"available tool name","arguments":{}}]}. Fill in the actual tool name and arguments from the user request and tool schemas. Do not execute the operation yourself. The external client executes it and returns the result. If a tool result already answers the question, respond with a normal visible answer. Do not end with empty content.'
+    system_parts = ["\n".join(tool_prompt)]
+    offset = 0
+    while offset < len(messages) and messages[offset].get("role") == "system":
+        system_parts.append(normalize_content_for_genai(messages[offset].get("content")))
+        offset += 1
+    system_parts.append(transport_requirement)
+    return [{"role": "system", "content": "\n\n".join(system_parts)},
+            *messages[offset:]]
+
 
 
 def strip_json_code_fence(text):
@@ -1194,6 +1217,9 @@ def collect_genai_response(messages, model, max_tokens, access_token=None, image
                 content_parts.append(event["content"])
         if event["type"] == "done":
             break
+
+    if not content_parts and not reasoning_parts:
+        raise RuntimeError("GenAI upstream returned an empty response (no content or reasoning)")
 
     return {
         "content": "".join(content_parts),
