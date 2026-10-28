@@ -7,7 +7,7 @@
 
 ## 运行
 
-启动：start_local.cmd（只运行一个实例）
+启动：本机已配置 GenAI2OpenAI-Local 计划任务，登录自启，守护程序在反代子进程退出 10 秒后自动恢复；手动启动用 Start-ScheduledTask。安装脚本 install_autostart.ps1，运行入口 run_managed.py，详见 docs/后台运行.md。未安装托管的环境仍可用 start_local.cmd（只运行一个实例）。
 验证：verify_live.cmd（优先读取已忽略的 credentials.txt，缺失时隐藏输入）；批量普通文本验证：verify_models.cmd
 地址：http://127.0.0.1:5057/v1
 模型：deepseek-pro
@@ -110,3 +110,5 @@ DSH 两个学校 DeepSeek 模型的输入类型均已勾选“图片”（本机
 验证：学校直连正确读出测试图代码 VISION-7284、左红圆、右蓝方；反代 JSON 曾正确识别，SSE 和历史追问在更新后正确识别；另一次 JSON 请求出现学校读取超时，不能保证所有请求稳定。tests/check_images.py 覆盖 GPT/DeepSeek/联网别名的 JSON、SSE、多图字段、历史图片保留及输入不被修改；tests/check_adapter.py 回归通过。DSH 附件实测成功，记录见 Git 忽略的 logs/image-probe/。
 
 DSH 最终双路径验收：session-6a57c10f-3619-474a-89b6-1c3c4d454aa2 附件直读，以及 session-f000806b-e5af-4282-ad02-9169a29a6697 实际 read_image（isError=false，返回 text+image）均正确识别代码、颜色和形状，completed，零重试。两者使用联网别名，但本次任务没有请求搜索；图片与搜索同轮协同尚未实测。脱敏摘要 logs/image-probe/dsh.json。
+
+后台托管验收：注册当前用户登录触发器、普通权限、无密码、无运行时长限制；守护程序启动服务。主动结束反代监听子进程后，12.6 秒恢复健康检查，日志记录旧进程退出和新进程启动。计划任务自带的失败重试在首次测试中未观察到恢复，因此实际依赖 run_managed.py 的 10 秒子进程恢复循环。登录触发器已核对配置，未为测试注销或重启电脑。守护程序本身被结束或系统挂起不在该子进程恢复保证内。
