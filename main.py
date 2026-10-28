@@ -1020,6 +1020,9 @@ def stream_genai_events(messages, model, max_tokens, access_token=None, image_pa
 
                     if line_str:
                         genai_json = json.loads(line_str)
+                        if genai_json.get("errMsg") or genai_json.get("success") is False or genai_json.get("code") not in (None, 0, 200):
+                            yield {"type": "error", "error": genai_json.get("errMsg") or genai_json.get("message") or "GenAI upstream rejected the request"}
+                            return
                         logger.debug("Upstream SSE chunk keys: %s", list(genai_json.keys()))
 
                         # 上游偶尔会返回补充元数据，先保留为内部 meta 事件。

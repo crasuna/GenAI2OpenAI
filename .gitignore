@@ -212,3 +212,10 @@ marimo/_lsp/
 __marimo__/
 
 .DS_Store
+
+# Personal runtime data
+logs/
+*.pid
+token.txt
+credentials.txt
+live-verification.json
