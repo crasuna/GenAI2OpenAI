@@ -36,7 +36,7 @@ with s.main.app.test_client() as c:
     r = c.get('/v1/models', headers={'Authorization': 'Bearer offline'})
     assert r.status_code == 200
     ids = [row['id'] for row in r.json['data']]
-    assert len(ids) == len(set(ids)) == 7
+    assert len(ids) == len(set(ids)) == 8
     assert 'deepseek-pro' in ids and 'deepseek-v3' not in ids
     resolved = {s.main.resolve_model(model) for model in ids}
     assert resolved == {(row['aiType'], row['rootAiType']) for row in text_records}
@@ -131,3 +131,73 @@ except ValueError:
 else:
     raise AssertionError('Invalid history arguments must not be silently rewritten')
 print('canonical tool history / IDs / arguments / result linkage / non-mutation PASS')
+
+# Search alias uses the same upstream model, with a nonempty query and references.
+class SearchChat:
+    status_code = 200
+    def iter_lines(self):
+        yield b'data: {"choices":[{"delta":{"content":"Answer with https://example.org"}}]}'
+        yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}'
+class SearchRefs:
+    def raise_for_status(self): pass
+    def json(self): return {'success': True, 'result': {'links': [{'link': 'https://example.org', 'title': 'Example'}], 'count': 1}}
+search_messages = [{'role': 'system', 'content': 'Be brief.'}, {'role': 'user', 'content': 'Find example.'}, {'role': 'user', 'content': 'Give sources.'}]
+search_original = json.loads(json.dumps(search_messages))
+with s.main.app.test_client() as c:
+    for stream in (False, True):
+        with patch.object(s.main.requests, 'post', side_effect=[SearchChat(), SearchRefs()]) as post:
+            r = c.post('/v1/chat/completions', headers={'Authorization': 'Bearer offline'}, json={'model': 'deepseek-pro-search', 'messages': search_messages, 'stream': stream})
+            assert r.status_code == 200 and b'https://example.org' in r.data and b'search_results' in r.data
+            body = post.call_args_list[0].kwargs['json']
+            assert body['aiType'] == 'deepseek-pro' and body['netGo'] is True
+            assert body['chatInfo'] == 'Find example.\n\nGive sources.'
+            assert body['messages'] == search_messages[:1]
+            assert post.call_args_list[1].args[0] == s.main.GENAI_SEARCH_URL
+            if stream: assert b'[DONE]' in r.data
+            else: assert r.json['search_results']['count'] == 1
+    with patch.object(s.main.requests, 'post', return_value=SearchChat()) as post:
+        r=c.post('/v1/chat/completions', headers={'Authorization': 'Bearer offline'}, json={'model':'deepseek-pro','messages':search_messages})
+        assert r.status_code==200 and post.call_count==1
+        assert 'netGo' not in post.call_args.kwargs['json']
+        assert 'search_results' not in r.json
+assert search_messages == search_original
+with patch.object(s.main.requests, 'post', side_effect=s.main.requests.Timeout):
+    assert 'error' in s.main.fetch_search_results({}, 'offline')
+print('search alias / query split / references JSON and SSE / normal unchanged PASS')
+
+# Search and local tools share one agent loop; only search executes in the proxy.
+def collected_text(text, sources=None):
+    return {'content': text, 'reasoning_content': '', 'search_results': sources}
+search_call = json.dumps({'tool_calls': [{'name': 'web_search', 'arguments': {'queries': ['school official website']}}]})
+local_call = json.dumps({'tool_calls': [{'name': 'write', 'arguments': {'file_path': 'report.txt', 'content': 'https://example.org'}}]})
+local_tools = [{'type':'function','function':{'name':'write','parameters':{'type':'object'}}}]
+with s.main.app.test_client() as c:
+    for streaming in (False, True):
+        with patch.object(s.main, 'collect_genai_response', side_effect=[
+            collected_text(search_call), collected_text('School source: https://example.org', {'links':[{'link':'https://example.org'}], 'count':1}), collected_text(local_call)]) as collect:
+            r=c.post('/v1/chat/completions',headers={'Authorization':'Bearer offline'},json={
+                'model':'deepseek-pro-search','messages':[{'role':'user','content':'Search and write a report.'}],
+                'tools':local_tools,'stream':streaming})
+            assert r.status_code==200 and b'write' in r.data and b'https://example.org' in r.data
+            assert [call.args[1] for call in collect.call_args_list] == ['deepseek-pro','deepseek-pro-search','deepseek-pro']
+            assert collect.call_args_list[1].args[0] == [{'role':'user','content':'school official website'}]
+            followup=collect.call_args_list[2].args[0]
+            assert any('School source: https://example.org' in m['content'] for m in followup)
+            if not streaming:
+                message=r.json['choices'][0]['message']
+                assert message['tool_calls'][0]['function']['name']=='write'
+                assert 'https://example.org' in message['content']
+            else: assert b'[DONE]' in r.data
+    with patch.object(s.main,'collect_genai_response',return_value=collected_text(local_call)) as collect:
+        r=c.post('/v1/chat/completions',headers={'Authorization':'Bearer offline'},json={
+            'model':'deepseek-pro-search','messages':[{'role':'user','content':'Write a file.'}],
+            'tools':local_tools,'tool_choice':{'type':'function','function':{'name':'write'}}})
+        assert r.status_code==200 and collect.call_count==1
+    with patch.object(s.main,'collect_genai_response',return_value=collected_text(search_call)) as collect:
+        # Every search result is mocked too; repeated model searches must terminate.
+        try:
+            s.main.collect_search_agent_response([{'role':'user','content':'Search'}],local_tools,'auto',64,'offline',None)
+        except RuntimeError as e:
+            assert 'limit' in str(e)
+        else: raise AssertionError('Search loop must be bounded')
+print('school search + local tools / search context retention / named local tool / loop bound PASS')

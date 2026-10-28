@@ -88,3 +88,15 @@ Git 仓库不包含旧聊天记录或会话凭据；用户选择保存在本机�
 已重启正常反代。离线回归通过，覆盖多调用、参数对象/字符串、ID、结果关联、已有正文、无输入修改及非法参数不静默改写。DSH 新建空白对话“读取文件获取验证码”，连续两轮分别读取 fresh-format-a.txt、fresh-format-b.txt；两轮均实际 read、tool/result isError=false、最终验证码正确，均无自动重试。第二轮包含第一轮工具历史，测试提示没有额外教模型格式。
 
 会话 ID：session-2e46b14f-1839-4993-bd54-4c42237e4309。脱敏验证摘要：logs/dsh-diagnostic/canonical-history-fresh-session.json（Git 忽略）。这是两轮验证结果，不是所有工具和长历史稳定性的保证。旧对话保留，未改写其保存记录。
+
+## 学校原生工具接口核查
+
+2026-10-28 直接对学校现有聊天入口做 12 次合成请求，覆盖 DeepSeek/GPT、tools 的 required/指定/none、messages、旧 functions 及非流式。10 次流式仅返回正文和 stop，无原生工具字段；2 次非流式为学校业务内部错误。公开聊天脚本未展示原生工具字段；标准 /htk/v1/chat/completions 在有效鉴权后为 404。未证实可用的原生入口，现有模拟方案不变。范围与证据见 docs/原生工具接口核查-2026-10-28.md。
+
+## 学校网页联网接入（2026-10-28）
+
+新增本地模型别名 deepseek-pro-search，DSH 显示“学校 DeepSeek（联网）”，沿用既有学校供应商地址和凭据。上游仍为 deepseek-pro，使用从当前网页 JS 确认的 netGo=true 和非空 chatInfo，回答结束后查询 /chat/net/search。普通 deepseek-pro 不开启此功能。
+
+联网版同时支持学校搜索与 DSH 本机工具：反代接管 web_search，取得搜索答案及来源后继续模型决策；read、write、pwsh 等仍由 DSH 执行。已撤销禁用客户端工具及强制工具返回 400 的方案。搜索记录随 assistant.content 保留到下一轮，顶层 search_results 提供扩展元数据。网页参考列表与正文链接不能保证逐项一致。
+
+离线回归通过，包含搜索与本地工具的 JSON/SSE 衔接、历史保留、指定工具和循环上限；直接联网 API 普通/流式均返回正文和 6 条来源。最新 DSH 新会话 session-baa1968b-2bc1-4273-9af6-26837c2c7c39 完成学校搜索（10 条来源）→ 本地 write（isError=false）→ 最终回答，零自动重试，测试文件已核验。摘要 logs/school-web/dsh-agent-verification.json。搜索答案报告首页抓取异常，未独立核验所有事实或页面。详见 docs/学校网页联网模式.md。thinking 开关此次未接入。
