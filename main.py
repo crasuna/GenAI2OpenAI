@@ -1401,6 +1401,69 @@ def stream_responses_api(messages, model, max_tokens, access_token=None):
             yield "data: [DONE]\n\n"
             return
 
+class InvalidToolCallFormat(RuntimeError):
+    """The model exhausted its bounded tool-format repair attempts."""
+
+
+def validate_tool_output(content):
+    """Validate claimed calls without repairing JSON or altering commands."""
+    text = strip_json_code_fence(content or "").strip()
+    canonical = text.startswith("TOOL_REQUEST")
+    claimed = canonical or text.startswith("<tool_call>") or bool(
+        re.match(r'^\{\s*"(?:tool_calls|name)"\s*:', text))
+    if canonical:
+        # Unlike extraction, full decoding rejects truncation and trailing junk.
+        parsed = json.loads(text[len("TOOL_REQUEST"):].strip())
+        raw_calls = parsed.get("tool_calls") if isinstance(parsed, dict) else None
+        if not isinstance(raw_calls, list) or not raw_calls:
+            raise ValueError("Expected a nonempty tool_calls array")
+        for raw in raw_calls:
+            if not isinstance(raw, dict):
+                raise ValueError("Each tool call must be an object")
+            function = raw.get("function", raw)
+            if not isinstance(function, dict) or not isinstance(function.get("name"), str) or not function['name'].strip():
+                raise ValueError("Tool name is missing")
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments)
+            if not isinstance(arguments, dict):
+                raise ValueError("Tool arguments must be a JSON object")
+    calls = parse_tool_calls_from_content(content)
+    if claimed and not calls:
+        raise ValueError("Tool request could not be parsed")
+    for call in calls:
+        if not isinstance(json.loads(call['function']['arguments']), dict):
+            raise ValueError("Tool arguments must be a JSON object")
+    return calls
+
+
+def collect_tool_response(messages, model, max_tokens, access_token, image_payload):
+    """Retry invalid model output twice, before any call is dispatched."""
+    history = list(messages)
+    for attempt in range(3):
+        collected = collect_genai_response(history, model, max_tokens, access_token, image_payload)
+        try:
+            calls = validate_tool_output(collected['content'])
+            if attempt and not calls:
+                raise ValueError("Repair did not produce a tool call")
+            return collected, calls
+        except (ValueError, TypeError, KeyError) as exc:
+            logger.warning("Invalid tool output: attempt=%s category=%s", attempt + 1, type(exc).__name__)
+            if attempt == 2:
+                raise InvalidToolCallFormat(
+                    "Model returned invalid tool-call format after 2 repair attempts; no calls from this response were dispatched."
+                ) from exc
+            # These are unexecuted drafts, never serialized as completed calls.
+            history = history + [
+                {'role': 'assistant', 'content': collected['content']},
+                {'role': 'user', 'content': (
+                    '上一条工具请求格式无效，未执行。请重新生成完整合法的工具调用，'
+                    '仅输出 TOOL_REQUEST 和一个 JSON 对象，tool_calls 必须是非空数组，'
+                    '每项含 name 和对象类型的 arguments。检查括号闭合及字符串转义。'
+                    '不要声称已执行，不要输出解释，也不要改变原任务范围。')},
+            ]
+
+
 def collect_search_agent_response(messages, tools, tool_choice, max_tokens, access_token, image_payload):
     """Execute only school web_search internally; return local calls to the client."""
     search_tool = {"type": "function", "function": {
@@ -1426,8 +1489,7 @@ def collect_search_agent_response(messages, tools, tool_choice, max_tokens, acce
         upstream = build_tool_calling_messages(history, agent_tools, choice)
         # The reasoning/tool-selection step is ordinary chat. Only actual search
         # calls enable netGo, so a local tool result is never used as a search query.
-        collected = collect_genai_response(upstream, "deepseek-pro", max_tokens, access_token, image_payload)
-        calls = parse_tool_calls_from_content(collected["content"])
+        collected, calls = collect_tool_response(upstream, "deepseek-pro", max_tokens, access_token, image_payload)
         searches = [c for c in calls if c["function"]["name"] == "web_search"]
         if not searches:
             collected["search_context"] = (
@@ -1503,11 +1565,13 @@ def chat_completions():
         if search_agent:
             agent_collected, agent_calls = collect_search_agent_response(
                 upstream_messages, tools, tool_choice, max_tokens, access_token, image_payload)
+        elif tools_enabled:
+            agent_collected, agent_calls = collect_tool_response(
+                upstream_messages, model, max_tokens, access_token, image_payload)
 
         if stream:
             if tools_enabled:
-                collected = agent_collected if search_agent else collect_genai_response(upstream_messages, model, max_tokens, access_token, image_payload)
-                tool_calls = agent_calls if search_agent else parse_tool_calls_from_content(collected["content"])
+                collected, tool_calls = agent_collected, agent_calls
                 return Response(
                     stream_with_context(stream_tool_calls_response(model, collected["content"], tool_calls, collected.get("search_results"), collected.get("search_context"))),
                     mimetype='text/event-stream',
@@ -1529,8 +1593,8 @@ def chat_completions():
             )
 
         # 非流式模式先完整收集，再一次性组装 OpenAI 响应体。
-        collected = agent_collected if search_agent else collect_genai_response(upstream_messages, model, max_tokens, access_token, image_payload)
-        tool_calls = agent_calls if search_agent else (parse_tool_calls_from_content(collected["content"]) if tools_enabled else [])
+        collected = agent_collected if tools_enabled else collect_genai_response(upstream_messages, model, max_tokens, access_token, image_payload)
+        tool_calls = agent_calls if tools_enabled else []
         response = build_chat_completion_payload(
             model,
             collected["content"],
@@ -1543,6 +1607,9 @@ def chat_completions():
             response["search_results"] = collected["search_results"]
         return jsonify(response)
     
+    except InvalidToolCallFormat as e:
+        return jsonify({'error': {'message': str(e), 'type': 'upstream_error',
+                                  'code': 'invalid_tool_call_format'}}), 502
     except Exception as e:
         logger.exception("chat_completions failed")
         return jsonify({'error': str(e)}), 500
