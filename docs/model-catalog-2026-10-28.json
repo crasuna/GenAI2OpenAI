@@ -1,0 +1,108 @@
+{
+  "source": "User-supplied response from /htk/ai/aiModel/list; not independently fetched by the agent",
+  "timestamp": 1793180454440,
+  "total": 8,
+  "pages": 1,
+  "records": [
+    {
+      "aiName": "GPT-6.1-Sol",
+      "simpleName": "GPT-6.1-Sol",
+      "aiType": "GPT-6.1-Sol",
+      "rootAiType": "azure",
+      "modelCode": "GPT-6.1-Sol",
+      "payType": "PAID",
+      "enableDeepThink": 1,
+      "status": "3",
+      "showStatus": "3",
+      "updateTime": "2026-10-26 02:34:05"
+    },
+    {
+      "aiName": "GPT-6-Astra",
+      "simpleName": "gpt-6-astra",
+      "aiType": "gpt-6-astra",
+      "rootAiType": "azure",
+      "modelCode": "gpt-6-astra",
+      "payType": "PAID",
+      "enableDeepThink": 1,
+      "status": "3",
+      "showStatus": "3",
+      "updateTime": "2026-09-24 00:38:41"
+    },
+    {
+      "aiName": "GPT-6-Luna",
+      "simpleName": "GPT-6-Luna",
+      "aiType": "GPT-6-Luna",
+      "rootAiType": "azure",
+      "modelCode": "GPT-6-Luna",
+      "payType": "PAID",
+      "enableDeepThink": 1,
+      "status": "3",
+      "showStatus": "3",
+      "updateTime": "2026-09-24 00:38:48"
+    },
+    {
+      "aiName": "GPT-Image-2.5-Sunburst",
+      "simpleName": "GPT-Image-2.5",
+      "aiType": "GPT-Image-2",
+      "rootAiType": "azure",
+      "modelCode": "GPT-Image-2",
+      "payType": "PAID",
+      "enableDeepThink": 0,
+      "status": "2",
+      "showStatus": "3",
+      "updateTime": "2026-09-16 03:40:25"
+    },
+    {
+      "aiName": "GLM-5.3-Flash",
+      "simpleName": "chatglm",
+      "aiType": "chatglm",
+      "rootAiType": "xinference",
+      "modelCode": "chatglm",
+      "payType": "FREE",
+      "maxToken": 1048576,
+      "enableDeepThink": 0,
+      "status": "3",
+      "showStatus": "3",
+      "updateTime": "2026-10-23 05:22:25"
+    },
+    {
+      "aiName": "Qwen-3.8",
+      "simpleName": "Qwen-3.8",
+      "aiType": "qwen-instruct",
+      "rootAiType": "xinference",
+      "modelCode": "qwen-instruct",
+      "payType": "FREE",
+      "maxToken": 524288,
+      "enableDeepThink": 0,
+      "status": "3",
+      "showStatus": "3",
+      "updateTime": "2026-09-24 15:05:27"
+    },
+    {
+      "aiName": "DeepSeek-V4.1-Flash",
+      "simpleName": "DeepSeek-V4.1-Flash",
+      "aiType": "deepseek-pro",
+      "rootAiType": "xinference",
+      "modelCode": "deepseek-pro",
+      "payType": "FREE",
+      "maxToken": 1048576,
+      "enableDeepThink": 0,
+      "status": "3",
+      "showStatus": "3",
+      "updateTime": "2026-10-22 08:06:04"
+    },
+    {
+      "aiName": "Kimi-K3",
+      "simpleName": "Kimi-K3",
+      "aiType": "Kimi-k3",
+      "rootAiType": "xinference",
+      "modelCode": "Kimi-k3",
+      "payType": "FREE",
+      "maxToken": 1048576,
+      "enableDeepThink": 1,
+      "status": "3",
+      "showStatus": "3",
+      "updateTime": "2026-09-24 15:05:46"
+    }
+  ]
+}

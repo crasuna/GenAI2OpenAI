@@ -200,104 +200,58 @@ GENAI_HEADERS = {
     "sec-ch-ua-platform": '"Windows"',
 }
 
+# Catalog snapshot supplied by the user, 2026-10-28. Names are platform labels,
+# not independently verified model identities. Image generation is excluded.
 MODEL_SPECS = [
     {
-        "public_id": "deepseek-r1",
-        "request_id": "deepseek-r1:671b",
-        "actual_id": "deepseek-r1:671b",
-        "root_ai_type": "xinference",
+        "public_id": "gpt-6.1-sol",
+        "request_id": "GPT-6.1-Sol",
+        "actual_id": "GPT-6.1-Sol",
+        "root_ai_type": "azure"
     },
     {
-        "public_id": "deepseek-v3",
-        "request_id": "deepseek-v3:671b",
-        "actual_id": "deepseek-v3:671b",
-        "root_ai_type": "xinference",
+        "public_id": "gpt-6-astra",
+        "request_id": "gpt-6-astra",
+        "actual_id": "GPT-6-Astra",
+        "root_ai_type": "azure"
     },
     {
-        "public_id": "glm-5.1",
+        "public_id": "gpt-6-luna",
+        "request_id": "GPT-6-Luna",
+        "actual_id": "GPT-6-Luna",
+        "root_ai_type": "azure"
+    },
+    {
+        "public_id": "glm-5.3-flash",
         "request_id": "chatglm",
-        "actual_id": "glm-chat",
-        "root_ai_type": "xinference",
+        "actual_id": "GLM-5.3-Flash",
+        "root_ai_type": "xinference"
     },
     {
-        "public_id": "minimax-m1",
-        "request_id": "MiniMax-M1",
-        "actual_id": "minimax",
-        "root_ai_type": "xinference",
-    },
-    {
-        "public_id": "qwen3.5-397b-a17b",
+        "public_id": "qwen-3.8",
         "request_id": "qwen-instruct",
-        "actual_id": "qwen-instruct",
-        "root_ai_type": "xinference",
-    },
-    {
-        "public_id": "gpt-5.5",
-        "request_id": "GPT-5.5",
-        "actual_id": "gpt-5.5-2026-04-24",
-        "root_ai_type": "azure",
-    },
-    {
-        "public_id": "gpt-5.4",
-        "request_id": "GPT-5.4",
-        "actual_id": "gpt-5.4-2026-03-05",
-        "root_ai_type": "azure",
-    },
-    {
-        "public_id": "gpt-5.2",
-        "request_id": "GPT-5.2",
-        "actual_id": "gpt-5.2-2025-12-11",
-        "root_ai_type": "azure",
-    },
-    {
-        "public_id": "gpt-5",
-        "request_id": "GPT-5",
-        "actual_id": "gpt-5-2025-08-07",
-        "root_ai_type": "azure",
-    },
-    {
-        "public_id": "gpt-4.1",
-        "request_id": "GPT-4.1",
-        "actual_id": "gpt-4.1-2025-04-14",
-        "root_ai_type": "azure",
-    },
-    {
-        "public_id": "gpt-4.1-mini",
-        "request_id": "GPT-4.1-mini",
-        "actual_id": "gpt-4.1-mini-2025-04-14",
-        "root_ai_type": "azure",
-    },
-    {
-        "public_id": "gpt-o4-mini",
-        "request_id": "o4-mini",
-        "actual_id": "o4-mini-2025-04-16",
-        "root_ai_type": "azure",
-    },
-    {
-        "public_id": "gpt-o3",
-        "request_id": "o3",
-        "actual_id": "o3-2025-04-16",
-        "root_ai_type": "azure",
+        "actual_id": "Qwen-3.8",
+        "root_ai_type": "xinference"
     },
     {
         "public_id": "deepseek-pro",
         "request_id": "deepseek-pro",
-        "actual_id": "deepseek-v4-pro",
-        "root_ai_type": "xinference",
+        "actual_id": "DeepSeek-V4.1-Flash",
+        "root_ai_type": "xinference"
     },
     {
-        "public_id": "deepseek-chat",
-        "request_id": "deepseek-chat",
-        "actual_id": "deepseek-v4-flash",
-        "root_ai_type": "xinference",
-    },
+        "public_id": "kimi-k3",
+        "request_id": "Kimi-k3",
+        "actual_id": "Kimi-K3",
+        "root_ai_type": "xinference"
+    }
 ]
 
 
 def build_model_alias_lookup():
     """构建模型别名查找表。
 
-    将对外公开名称、上游请求名称和上游实际模型名称统一映射到同一份
+    将对外公开名称、上游请求名称和平台展示名称统一映射到同一份
     模型规格上，便于后续按任意别名解析。
 
     Returns:
@@ -318,7 +272,7 @@ def resolve_model(model_name):
 
     Args:
         model_name (Any): 调用方传入的模型名，可能是 public id、request id
-            或 actual id。
+            或平台展示名（actual_id 字段）。
 
     Returns:
         tuple[Any, str]: 第一个元素为实际发给上游的 `aiType`，第二个元素为
@@ -975,6 +929,11 @@ def stream_genai_events(messages, model, max_tokens, access_token=None, image_pa
         "rootAiType": root_ai_type,
         "maxToken": max_tokens or 30000
     }
+    # Kimi's backend appends chatInfo to messages, even when it is empty.
+    # Send the current user turn separately, retaining history without duplication.
+    if upstream_model.lower() == "kimi-k3" and messages and messages[-1].get("role") == "user":
+        genai_data["chatInfo"] = normalize_content_for_genai(messages[-1].get("content"))
+        genai_data["messages"] = messages[:-1]
     if image_payload:
         genai_data.update(image_payload)
 

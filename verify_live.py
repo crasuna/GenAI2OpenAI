@@ -1,12 +1,12 @@
-"""Two small real requests, using a hidden token prompt (never saved)."""
-import getpass
+"""Two small real requests, using local credentials or a hidden token prompt."""
 import json
 from datetime import datetime
 from pathlib import Path
 import requests
+from local_credentials import load_token
 
 base = "http://127.0.0.1:5057/v1"
-token = getpass.getpass("Paste YOUR GenAI web token (hidden), then Enter: ").strip()
+token = load_token()
 if not token:
     raise SystemExit("No token entered.")
 model = input("Model [deepseek-pro]: ").strip() or "deepseek-pro"
@@ -43,8 +43,9 @@ try:
                 if not done:
                     raise RuntimeError("Stream did not terminate with [DONE]")
             passed = "API_OK" in answer
-            results["checks"].append({"stream": streaming, "passed": passed, "reply": answer[:200]})
-            print("stream=", streaming, "passed=", passed, "reply=", answer[:200])
+            safe_answer = answer.replace(token, "[REDACTED]")[:200]
+            results["checks"].append({"stream": streaming, "passed": passed, "reply": safe_answer})
+            print("stream=", streaming, "passed=", passed, "reply=", safe_answer)
             if not passed:
                 raise RuntimeError("Expected API_OK was absent; this is not a verified success")
 except Exception as exc:
