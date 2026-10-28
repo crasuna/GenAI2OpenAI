@@ -100,3 +100,13 @@ Git 仓库不包含旧聊天记录或会话凭据；用户选择保存在本机�
 联网版同时支持学校搜索与 DSH 本机工具：反代接管 web_search，取得搜索答案及来源后继续模型决策；read、write、pwsh 等仍由 DSH 执行。已撤销禁用客户端工具及强制工具返回 400 的方案。搜索记录随 assistant.content 保留到下一轮，顶层 search_results 提供扩展元数据。网页参考列表与正文链接不能保证逐项一致。
 
 离线回归通过，包含搜索与本地工具的 JSON/SSE 衔接、历史保留、指定工具和循环上限；直接联网 API 普通/流式均返回正文和 6 条来源。最新 DSH 新会话 session-baa1968b-2bc1-4273-9af6-26837c2c7c39 完成学校搜索（10 条来源）→ 本地 write（isError=false）→ 最终回答，零自动重试，测试文件已核验。摘要 logs/school-web/dsh-agent-verification.json。搜索答案报告首页抓取异常，未独立核验所有事实或页面。详见 docs/学校网页联网模式.md。thinking 开关此次未接入。
+
+## DeepSeek 图片输入（2026-10-28）
+
+已解除反代仅 GPT 可传图的限制，支持 deepseek-pro 及 deepseek-pro-search。按学校网页格式上传 image_url / input_image 的 URL 或 base64 图片，并传递 imageUrl、imageUrls，保留每条历史消息的图片关联；同一条消息的多张图片按顺序传递。学校 DeepSeek 实测仅历史图片字段不足以支持追问，因此每轮也重新附带最近一组图片。跨多个历史图片组的任意对比未验证。
+
+DSH 两个学校 DeepSeek 模型的输入类型均已勾选“图片”（本机配置，不包含在 Git）。图片通过学校已有图片上传服务传递，Token 不写入测试报告。附件成功不等于 PDF 原文件上传功能已接入。
+
+验证：学校直连正确读出测试图代码 VISION-7284、左红圆、右蓝方；反代 JSON 曾正确识别，SSE 和历史追问在更新后正确识别；另一次 JSON 请求出现学校读取超时，不能保证所有请求稳定。tests/check_images.py 覆盖 GPT/DeepSeek/联网别名的 JSON、SSE、多图字段、历史图片保留及输入不被修改；tests/check_adapter.py 回归通过。DSH 附件实测成功，记录见 Git 忽略的 logs/image-probe/。
+
+DSH 最终双路径验收：session-6a57c10f-3619-474a-89b6-1c3c4d454aa2 附件直读，以及 session-f000806b-e5af-4282-ad02-9169a29a6697 实际 read_image（isError=false，返回 text+image）均正确识别代码、颜色和形状，completed，零重试。两者使用联网别名，但本次任务没有请求搜索；图片与搜索同轮协同尚未实测。脱敏摘要 logs/image-probe/dsh.json。

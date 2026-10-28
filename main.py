@@ -428,7 +428,7 @@ def infer_root_ai_type(model_name):
 
 
 def is_gpt_model(model_name):
-    """判断模型是否为 GPT/Azure 系列（图片能力仅对其开放）。"""
+    """判断模型是否为 GPT/Azure 系列。"""
     _, root_ai_type = resolve_model(model_name)
     return root_ai_type == "azure"
 
@@ -510,58 +510,51 @@ def upload_image_to_genai(image_bytes, filename, mime_type, access_token=None):
     return payload
 
 
-def parse_image_input_from_message(message):
-    """从单条 OpenAI user message 中提取图片输入（URL 或 data URL）。"""
+def parse_image_inputs_from_message(message):
+    """Collect every OpenAI image block in a user message, preserving order."""
     if not isinstance(message, dict) or message.get("role") != "user":
-        return None
-
+        return []
     content = message.get("content")
     if not isinstance(content, list):
-        return None
-
+        return []
+    images = []
     for part in content:
-        if not isinstance(part, dict):
+        if not isinstance(part, dict) or part.get("type") not in {"image_url", "input_image"}:
             continue
-        part_type = part.get("type")
-        if part_type not in {"image_url", "input_image"}:
-            continue
-
-        if isinstance(part.get("image_url"), dict):
-            url_value = part["image_url"].get("url")
-            if url_value:
-                return url_value
-        if isinstance(part.get("image_url"), str):
-            return part.get("image_url")
-        if isinstance(part.get("url"), str):
-            return part.get("url")
-
-    return None
+        value = part.get("image_url") or part.get("url")
+        if isinstance(value, dict):
+            value = value.get("url")
+        if not isinstance(value, str) or not value:
+            raise ValueError("Image input requires a URL or base64 data URL")
+        images.append(value)
+    return images
 
 
-def prepare_image_payload(messages, model, access_token=None):
-    """从请求消息中准备上游所需图片参数（仅 GPT 模型可用）。"""
-    image_input = None
-    for message in reversed(messages):
-        image_input = parse_image_input_from_message(message)
-        if image_input:
-            break
-
-    if not image_input:
-        logger.debug("No image input found in messages")
-        return None
-
-    if not is_gpt_model(model):
-        logger.debug("Rejecting image input for non-GPT model: %s", model)
-        raise ValueError("Image input is only available for GPT models")
-
-    if image_input.startswith("data:"):
-        image_bytes, mime_type, filename = read_image_from_data_url(image_input)
-    else:
-        image_bytes, mime_type, filename = fetch_image_bytes(image_input)
-
-    image_payload = upload_image_to_genai(image_bytes, filename, mime_type, access_token)
-    logger.debug("Prepared image payload: %s", image_payload)
-    return image_payload
+def prepare_image_messages(messages, model, access_token=None):
+    """Upload images and preserve their association with current/history turns."""
+    prepared = []
+    current_payload = None
+    upstream_model, _ = resolve_model(model)
+    for message in messages:
+        normalized = normalize_messages_for_genai([message])
+        images = parse_image_inputs_from_message(message)
+        if images:
+            if not is_gpt_model(model) and upstream_model != "deepseek-pro":
+                raise ValueError("Image input is currently supported for GPT and DeepSeek models")
+            uploaded = []
+            for image_input in images:
+                if image_input.startswith("data:"):
+                    data, mime, filename = read_image_from_data_url(image_input)
+                else:
+                    data, mime, filename = fetch_image_bytes(image_input)
+                uploaded.append(upload_image_to_genai(data, filename, mime, access_token))
+            urls = [item["imageUrl"] for item in uploaded]
+            normalized[0].update(imageUrl=urls[0], imageUrls=urls)
+            # School DeepSeek ignores history-only image fields. Reattach the
+            # latest image group for follow-up questions and tool-result turns.
+            current_payload = {**uploaded[-1], "imageUrl": urls[0], "imageUrls": urls}
+        prepared.extend(normalized)
+    return prepared, current_payload
 
 
 def convert_messages_to_genai_format(messages):
@@ -646,10 +639,12 @@ def normalize_messages_for_genai(messages):
             })
             continue
 
-        normalized_messages.append({
-            "role": role,
-            "content": content,
-        })
+        item = {"role": role, "content": content}
+        # Already-uploaded images survive tool prompt/history normalization.
+        for key in ("imageUrl", "imageUrls"):
+            if key in message:
+                item[key] = message[key]
+        normalized_messages.append(item)
 
     return normalized_messages
 
@@ -990,6 +985,11 @@ def stream_genai_events(messages, model, max_tokens, access_token=None, image_pa
         genai_data.update(netGo=True, chatInfo=query, messages=messages[:offset])
     if image_payload:
         genai_data.update(image_payload)
+        # Match the webpage: current text/images at the top level, older
+        # image-bearing turns in messages. Do not duplicate the current turn.
+        if not search_enabled and messages and messages[-1].get("role") == "user":
+            genai_data["chatInfo"] = normalize_content_for_genai(messages[-1].get("content"))
+            genai_data["messages"] = messages[:-1]
 
     logger.debug(
         "Upstream request prepared: model=%s rootAiType=%s stream=%s maxToken=%s has_image=%s message_count=%s",
@@ -1486,7 +1486,7 @@ def chat_completions():
         tools = get_request_tools(req_data)
         tool_choice = get_request_tool_choice(req_data)
         access_token = get_request_access_token()
-        image_payload = prepare_image_payload(messages, model, access_token)
+        upstream_messages, image_payload = prepare_image_messages(messages, model, access_token)
         
         # 转换消息格式
         chat_info = convert_messages_to_genai_format(messages)
@@ -1496,14 +1496,13 @@ def chat_completions():
 
         search_mode = isinstance(model, str) and model.lower() == SEARCH_MODEL_ID
         tools_enabled = should_enable_tools(tools, tool_choice)
-        upstream_messages = normalize_messages_for_genai(messages)
         search_agent = search_mode and tools_enabled
         if tools_enabled and not search_agent:
             upstream_messages = build_tool_calling_messages(upstream_messages, tools, tool_choice)
         agent_collected = agent_calls = None
         if search_agent:
             agent_collected, agent_calls = collect_search_agent_response(
-                messages, tools, tool_choice, max_tokens, access_token, image_payload)
+                upstream_messages, tools, tool_choice, max_tokens, access_token, image_payload)
 
         if stream:
             if tools_enabled:
